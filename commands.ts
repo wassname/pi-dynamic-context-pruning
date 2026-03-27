@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent"
+import type { AutocompleteItem } from "@mariozechner/pi-tui"
 import type { DcpState } from "./state.js"
 import type { DcpConfig } from "./config.js"
 
@@ -289,17 +290,19 @@ export function registerCommands(
 ): void {
   pi.registerCommand("dcp", {
     description: "Dynamic Context Pruning — manage context window usage",
-    getArgumentCompletions(prefix: string) {
-      const subcommands = [
-        { label: "context", description: "Show context window usage breakdown" },
-        { label: "stats", description: "Show pruning statistics" },
-        { label: "sweep", description: "Prune tool outputs" },
-        { label: "manual", description: "Toggle manual mode" },
-        { label: "decompress", description: "List or restore compression blocks" },
-        { label: "compress", description: "Trigger LLM compression" },
-        { label: "help", description: "Show help" },
+    getArgumentCompletions(prefix: string): AutocompleteItem[] | null {
+      const subcommands: AutocompleteItem[] = [
+        { value: "context", label: "context", description: "Show context window usage breakdown" },
+        { value: "stats", label: "stats", description: "Show pruning statistics" },
+        { value: "sweep", label: "sweep", description: "Prune tool outputs" },
+        { value: "manual", label: "manual", description: "Toggle manual mode" },
+        { value: "decompress", label: "decompress", description: "List or restore compression blocks" },
+        { value: "compress", label: "compress", description: "Trigger LLM compression" },
+        { value: "help", label: "help", description: "Show help" },
       ]
-      const matched = subcommands.filter((s) => s.label.startsWith(prefix))
+      const matched = subcommands
+        .filter((s) => typeof s.value === "string")
+        .filter((s) => s.value.startsWith(prefix))
       return matched.length > 0 ? matched : null
     },
 

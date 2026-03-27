@@ -54,8 +54,57 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
 
     if (startIdx === -1 || endIdx === -1) continue;
 
-    const lo = Math.min(startIdx, endIdx);
-    const hi = Math.max(startIdx, endIdx);
+    let lo = Math.min(startIdx, endIdx);
+    let hi = Math.max(startIdx, endIdx);
+
+    // Expand lo backward: if the message immediately before lo is an assistant
+    // whose tool_use blocks have matching tool_results inside [lo..hi], pull
+    // it into the range so the pair is always removed together.
+    while (lo > 0) {
+      const prev = messages[lo - 1] as any;
+      if (prev.role !== "assistant") break;
+      const toolCallIdsInRange = new Set<string>();
+      for (let i = lo; i <= hi; i++) {
+        const m = messages[i] as any;
+        if (m.role === "toolResult" && typeof m.toolCallId === "string") {
+          toolCallIdsInRange.add(m.toolCallId);
+        }
+      }
+      const prevContent: any[] = Array.isArray(prev.content) ? prev.content : [];
+      const hasMatchingToolCalls = prevContent.some(
+        (block: any) => block.type === "toolCall" && toolCallIdsInRange.has(block.id)
+      );
+      if (!hasMatchingToolCalls) break;
+      lo--;
+    }
+
+    // Expand hi forward: for every assistant message in [lo..hi] that has
+    // tool_use blocks, include any immediately-following tool_result messages
+    // that correspond to those blocks. Loop to fixed point because expanding
+    // hi could expose more assistants in theory.
+    let prevHi: number;
+    do {
+      prevHi = hi;
+      const assistantToolCallIds = new Set<string>();
+      for (let i = lo; i <= hi; i++) {
+        const m = messages[i] as any;
+        if (m.role !== "assistant") continue;
+        const content: any[] = Array.isArray(m.content) ? m.content : [];
+        for (const block of content) {
+          if (block.type === "toolCall" && typeof block.id === "string") {
+            assistantToolCallIds.add(block.id);
+          }
+        }
+      }
+      while (hi + 1 < messages.length) {
+        const next = messages[hi + 1] as any;
+        if (next.role === "toolResult" && assistantToolCallIds.has(next.toolCallId)) {
+          hi++;
+        } else {
+          break;
+        }
+      }
+    } while (hi !== prevHi);
 
     // Estimate tokens removed
     let removedTokens = 0;
