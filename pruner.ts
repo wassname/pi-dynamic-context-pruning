@@ -57,16 +57,32 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
     let lo = Math.min(startIdx, endIdx);
     let hi = Math.max(startIdx, endIdx);
 
-    // Expand lo backward: if the message immediately before lo is an assistant
-    // whose tool_use blocks have matching tool_results inside [lo..hi], pull
-    // it into the range so the pair is always removed together.
+    // Expand lo backward: if there is an assistant before lo whose tool_use
+    // blocks have matching tool_results inside [lo..hi], pull the entire
+    // assistant + any intermediate result messages into the range so the
+    // group is always removed atomically.
+    //
+    // Critically we must skip backward past any toolResult / bashExecution
+    // messages before lo, because an assistant with multiple tool_calls emits
+    // N consecutive result messages — the assistant itself sits further back.
     while (lo > 0) {
-      const prev = messages[lo - 1] as any;
-      if (prev.role !== "assistant") break;
+      // Walk backward past tool-result messages to find the preceding assistant
+      let scanIdx = lo - 1;
+      while (scanIdx >= 0) {
+        const r = (messages[scanIdx] as any).role as string;
+        if (r !== "toolResult" && r !== "bashExecution") break;
+        scanIdx--;
+      }
+      if (scanIdx < 0 || (messages[scanIdx] as any).role !== "assistant") break;
+
+      const prev = messages[scanIdx] as any;
       const toolCallIdsInRange = new Set<string>();
       for (let i = lo; i <= hi; i++) {
         const m = messages[i] as any;
-        if (m.role === "toolResult" && typeof m.toolCallId === "string") {
+        if (
+          (m.role === "toolResult" || m.role === "bashExecution") &&
+          typeof m.toolCallId === "string"
+        ) {
           toolCallIdsInRange.add(m.toolCallId);
         }
       }
@@ -75,7 +91,8 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
         (block: any) => block.type === "toolCall" && toolCallIdsInRange.has(block.id)
       );
       if (!hasMatchingToolCalls) break;
-      lo--;
+      // Pull assistant + all intermediate result messages into the range
+      lo = scanIdx;
     }
 
     // Expand hi forward: for every assistant message in [lo..hi] that has
@@ -98,7 +115,10 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
       }
       while (hi + 1 < messages.length) {
         const next = messages[hi + 1] as any;
-        if (next.role === "toolResult" && assistantToolCallIds.has(next.toolCallId)) {
+        if (
+          (next.role === "toolResult" || next.role === "bashExecution") &&
+          assistantToolCallIds.has(next.toolCallId)
+        ) {
           hi++;
         } else {
           break;

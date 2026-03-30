@@ -281,4 +281,146 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("TEST 2 PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// Test 3 — MULTI-TOOLRESULT BACKWARD GAP
+//
+// assistant has TWO tool_calls (A + B) producing two consecutive toolResult
+// messages.  The compression range starts at toolResult_B — meaning there is
+// a toolResult message (A) sitting between lo and the assistant.
+//
+// Bug: backward expansion stopped at toolResult_A (not an assistant) and
+// never found the assistant → assistant was kept without its toolResult_B.
+// Fix: backward scan skips past toolResult messages to reach the assistant.
+//
+// Sequence:
+//   user(1000) → assistant(2000, toolCall_A + toolCall_B)
+//              → toolResult_A(3000) → toolResult_B(4000) → user(5000)
+// Compression block: [4000..4000] (only toolResult_B)
+// Expected: assistant + toolResult_A + toolResult_B all removed together
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 3: multi-toolResult backward gap (assistant has 2 tool_calls)");
+
+  const messages: any[] = [
+    { role: "user",        content: [{ type: "text", text: "do two things" }], timestamp: 1000 },
+    { role: "assistant",   content: [
+        { type: "toolCall", id: "toolu_A", name: "read",  arguments: {} },
+        { type: "toolCall", id: "toolu_B", name: "write", arguments: {} },
+      ], timestamp: 2000 },
+    { role: "toolResult",  toolCallId: "toolu_A", toolName: "read",  isError: false, content: [{ type: "text", text: "A result" }], timestamp: 3000 },
+    { role: "toolResult",  toolCallId: "toolu_B", toolName: "write", isError: false, content: [{ type: "text", text: "B result" }], timestamp: 4000 },
+    { role: "user",        content: [{ type: "text", text: "thanks" }], timestamp: 5000 },
+  ];
+
+  const state = makeState([
+    {
+      id: 1,
+      topic: "two-tool work",
+      summary: "Both tools were called successfully.",
+      startTimestamp: 4000,  // only toolResult_B
+      endTimestamp:   4000,
+      anchorTimestamp: 5000,
+      active: true,
+      summaryTokenEstimate: 10,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+
+  console.log("  Result messages:");
+  for (const m of result) {
+    const preview = Array.isArray(m.content)
+      ? m.content.map((b: any) => b.text ?? b.type ?? "?").join(" | ").slice(0, 60)
+      : String(m.content).slice(0, 60);
+    console.log(`    role="${m.role}"  ts=${m.timestamp}  content="${preview}"`);
+  }
+
+  // Neither the orphaned assistant nor its toolResults should survive unpaired
+  const assistantPresent = result.some((m: any) => m.role === "assistant" && m.timestamp === 2000);
+  const toolResultAPresent = result.some((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_A");
+  const toolResultBPresent = result.some((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_B");
+
+  // All three must be absent (removed atomically) or all three present as a valid group
+  if (assistantPresent) {
+    assert.ok(toolResultAPresent, "FAIL — assistant present but toolResult_A missing");
+    assert.ok(toolResultBPresent, "FAIL — assistant present but toolResult_B missing");
+    // Verify ordering: assistant → toolResult_A → toolResult_B
+    const aIdx = result.findIndex((m: any) => m.role === "assistant" && m.timestamp === 2000);
+    const rAIdx = result.findIndex((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_A");
+    const rBIdx = result.findIndex((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_B");
+    assert.ok(aIdx < rAIdx && rAIdx < rBIdx, "FAIL — assistant + toolResult ordering wrong");
+    console.log("  PASS: assistant + both toolResults kept as a coherent group");
+  } else {
+    assert.ok(!toolResultAPresent, "FAIL — assistant removed but orphaned toolResult_A still present");
+    assert.ok(!toolResultBPresent, "FAIL — assistant removed but orphaned toolResult_B still present");
+    console.log("  PASS: assistant + both toolResults removed atomically");
+  }
+
+  console.log("TEST 3 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 — BASHEXECUTION FORWARD GAP
+//
+// An assistant calls a tool whose result is stored as role="bashExecution".
+// The compression range covers the assistant but NOT the bashExecution result.
+//
+// Bug (before fix): forward expansion only checked role==="toolResult", so
+// bashExecution was left behind as an orphan.
+// Fix: forward expansion now also advances hi over bashExecution messages.
+//
+// Sequence:
+//   user(1000) → assistant(2000, toolCall_bash) → bashExecution(3000) → user(4000)
+// Compression block: [2000..2000] (only the assistant)
+// Expected: assistant + bashExecution removed together
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 4: bashExecution forward gap");
+
+  const messages: any[] = [
+    { role: "user",          content: [{ type: "text", text: "run bash" }], timestamp: 1000 },
+    { role: "assistant",     content: [{ type: "toolCall", id: "toolu_bash1", name: "bash", arguments: {} }], timestamp: 2000 },
+    { role: "bashExecution", toolCallId: "toolu_bash1", toolName: "bash", isError: false, content: [{ type: "text", text: "exit 0" }], timestamp: 3000 },
+    { role: "user",          content: [{ type: "text", text: "done" }], timestamp: 4000 },
+  ];
+
+  const state = makeState([
+    {
+      id: 1,
+      topic: "bash run",
+      summary: "Ran bash command successfully.",
+      startTimestamp: 2000,
+      endTimestamp:   2000,
+      anchorTimestamp: 4000,
+      active: true,
+      summaryTokenEstimate: 8,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+
+  console.log("  Result messages:");
+  for (const m of result) {
+    const preview = Array.isArray(m.content)
+      ? m.content.map((b: any) => b.text ?? b.type ?? "?").join(" | ").slice(0, 60)
+      : String(m.content).slice(0, 60);
+    console.log(`    role="${m.role}"  ts=${m.timestamp}  content="${preview}"`);
+  }
+
+  const assistantPresent   = result.some((m: any) => m.role === "assistant"     && m.timestamp === 2000);
+  const bashPresent        = result.some((m: any) => m.role === "bashExecution" && m.toolCallId === "toolu_bash1");
+
+  if (assistantPresent) {
+    assert.ok(bashPresent, "FAIL — assistant present but bashExecution result missing");
+    console.log("  PASS: assistant + bashExecution kept as a coherent group");
+  } else {
+    assert.ok(!bashPresent, "FAIL — assistant removed but orphaned bashExecution still present");
+    console.log("  PASS: assistant + bashExecution removed atomically");
+  }
+
+  console.log("TEST 4 PASSED\n");
+}
+
 console.log("All tests passed.");
