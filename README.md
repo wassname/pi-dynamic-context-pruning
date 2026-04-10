@@ -115,6 +115,10 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 
 Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.
 
+### Atomic tool pair removal
+
+When a compression range touches any part of an assistant→toolResult group, DCP automatically expands the range to include the entire group. This prevents orphaned `tool_use` or `tool_result` blocks that would cause API validation errors. The expansion logic skips over PI-internal passthrough messages (`compaction`, `branch_summary`, `custom_message`) that may sit between an assistant and its tool results. A post-compression repair pass acts as a safety net to catch any orphaned pairs that the expansion heuristics miss.
+
 ### Nudge types
 
 | Nudge | Condition |

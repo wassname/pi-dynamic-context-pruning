@@ -70,7 +70,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
       let scanIdx = lo - 1;
       while (scanIdx >= 0) {
         const r = (messages[scanIdx] as any).role as string;
-        if (r !== "toolResult" && r !== "bashExecution") break;
+        if (r !== "toolResult" && r !== "bashExecution" && !PASSTHROUGH_ROLES.has(r)) break;
         scanIdx--;
       }
       if (scanIdx < 0 || (messages[scanIdx] as any).role !== "assistant") break;
@@ -119,6 +119,8 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
           (next.role === "toolResult" || next.role === "bashExecution") &&
           assistantToolCallIds.has(next.toolCallId)
         ) {
+          hi++;
+        } else if (PASSTHROUGH_ROLES.has(next.role)) {
           hi++;
         } else {
           break;
@@ -169,6 +171,64 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
   }
 
   return messages;
+}
+
+/**
+ * Remove orphaned toolResult/bashExecution messages whose corresponding
+ * assistant toolCall was removed, and strip orphaned toolCall blocks from
+ * assistant messages whose toolResult was removed.
+ *
+ * This is a safety net that runs after all compression blocks are applied.
+ */
+function repairOrphanedToolPairs(messages: any[]): void {
+  // 1. Build set of all toolCall IDs present in assistant messages
+  const assistantToolCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    const content: any[] = Array.isArray(msg.content) ? msg.content : [];
+    for (const block of content) {
+      if (block.type === "toolCall" && typeof block.id === "string") {
+        assistantToolCallIds.add(block.id);
+      }
+    }
+  }
+
+  // 2. Build set of all toolCallIds present in toolResult/bashExecution messages
+  const resultToolCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
+    if (typeof msg.toolCallId === "string") {
+      resultToolCallIds.add(msg.toolCallId);
+    }
+  }
+
+  // 3. Remove orphaned toolResult/bashExecution messages (no matching assistant toolCall)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
+    if (typeof msg.toolCallId === "string" && !assistantToolCallIds.has(msg.toolCallId)) {
+      messages.splice(i, 1);
+    }
+  }
+
+  // 4. Strip orphaned toolCall blocks from assistant messages (no matching toolResult)
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    const content: any[] = Array.isArray(msg.content) ? msg.content : [];
+    const hasToolCalls = content.some((b: any) => b.type === "toolCall");
+    if (!hasToolCalls) continue;
+
+    const filtered = content.filter((block: any) => {
+      if (block.type !== "toolCall") return true;
+      return typeof block.id === "string" && resultToolCallIds.has(block.id);
+    });
+
+    // Only update if we actually removed something
+    if (filtered.length !== content.length) {
+      // If the assistant has no content left at all, keep at least an empty array
+      msg.content = filtered.length > 0 ? filtered : [];
+    }
+  }
 }
 
 /**
@@ -344,14 +404,27 @@ export function applyPruning(
   state: DcpState,
   config: DcpConfig
 ): any[] {
-  // Work on a shallow copy of the array (individual message objects may be mutated)
-  const msgs: any[] = [...messages];
+  // Deep-clone each message and its content to prevent mutations from
+  // affecting the original objects across context events.
+  const msgs: any[] = messages.map((m: any) => {
+    const clone = { ...m };
+    if (Array.isArray(clone.content)) {
+      clone.content = clone.content.map((block: any) =>
+        typeof block === "object" && block !== null ? { ...block } : block
+      );
+    }
+    return clone;
+  });
 
   // 1. Count user turns → update state.currentTurn
   state.currentTurn = msgs.filter((m) => m.role === "user").length;
 
   // 2. Apply active compression blocks
   applyCompressionBlocks(msgs, state);
+
+  // 2b. Post-compression safety net: remove any orphaned tool pairs that the
+  // expansion logic could not catch (e.g. multi-block interactions, pre-broken state).
+  repairOrphanedToolPairs(msgs);
 
   // 3. Apply deduplication
   applyDeduplication(msgs, state, config);
