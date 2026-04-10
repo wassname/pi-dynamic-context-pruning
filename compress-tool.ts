@@ -65,17 +65,20 @@ function resolveIdToTimestamp(
  * Determine the anchor timestamp for a compression block — the timestamp of
  * the first raw message that appears strictly after `endTimestamp`.
  *
- * Returns `Infinity` when the range extends to the very end of the visible
- * conversation (nothing comes after it).
+ * Returns `endTimestamp + 1` when the range extends to the very end of the
+ * visible conversation (nothing comes after it). We never use Infinity because
+ * it corrupts JSON serialization (becomes null) and breaks numeric comparisons.
  */
 function resolveAnchorTimestamp(endTimestamp: number, state: DcpState): number {
-  let anchor = Infinity
+  let anchor: number | null = null
   for (const ts of state.messageIdSnapshot.values()) {
-    if (ts > endTimestamp && ts < anchor) {
+    if (ts > endTimestamp && (anchor === null || ts < anchor)) {
       anchor = ts
     }
   }
-  return anchor
+  // Fall back to endTimestamp + 1 instead of Infinity to avoid JSON
+  // serialization corruption (Infinity → null) and comparison breakage.
+  return anchor ?? endTimestamp + 1
 }
 
 // ---------------------------------------------------------------------------
@@ -132,9 +135,27 @@ export function registerCompressTool(
           )
         }
 
+        // ── Validate timestamps are finite ──────────────────────────────
+        if (!Number.isFinite(startTimestamp)) {
+          throw new Error(
+            `Start ID "${startId}" resolved to a non-finite timestamp (${startTimestamp}). ` +
+            `This usually means the referenced message has a corrupted timestamp.`,
+          )
+        }
+        if (!Number.isFinite(endTimestamp)) {
+          throw new Error(
+            `End ID "${endId}" resolved to a non-finite timestamp (${endTimestamp}). ` +
+            `This usually means the referenced message has a corrupted timestamp.`,
+          )
+        }
+
         // ── Overlap check against existing active blocks ─────────────────
         for (const existing of state.compressionBlocks) {
           if (!existing.active) continue
+          // Skip blocks with corrupted timestamps
+          if (!Number.isFinite(existing.startTimestamp) || !Number.isFinite(existing.endTimestamp)) {
+            continue
+          }
           const overlaps =
             startTimestamp <= existing.endTimestamp &&
             existing.startTimestamp <= endTimestamp
@@ -142,7 +163,9 @@ export function registerCompressTool(
             throw new Error(
               `Overlapping compression ranges are not supported. ` +
               `New range (${startId}..${endId}) overlaps existing block ` +
-              `b${existing.id} "${existing.topic}"`,
+              `b${existing.id} "${existing.topic}" ` +
+              `(b${existing.id} covers ${existing.startTimestamp}..${existing.endTimestamp}, ` +
+              `new range covers ${startTimestamp}..${endTimestamp})`,
             )
           }
         }

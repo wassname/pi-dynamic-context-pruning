@@ -708,4 +708,115 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("TEST 9 PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// Test 10 — INFINITY ANCHOR BUG (regression test)
+//
+// Previously, when a compression block's range extended to the end of the
+// conversation, resolveAnchorTimestamp returned Infinity. This caused:
+//   1. JSON serialization turned Infinity into null, corrupting saved state
+//   2. Null timestamps in overlap checks caused false positives (every range
+//      appeared to overlap the ghost block)
+//   3. The model entered a compression spiral, unable to consolidate blocks
+//
+// Fix: resolveAnchorTimestamp returns endTimestamp + 1 instead of Infinity.
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 10: Infinity anchor timestamp regression");
+
+  // Conversation where the last message is at timestamp 4000.
+  // Compression block covers up to the end, so anchor should be 4001, not Infinity.
+  const messages: any[] = [
+    { role: "user",       content: [{ type: "text", text: "read file" }], timestamp: 1000 },
+    { role: "assistant",  content: [{ type: "toolCall", id: "toolu_1", name: "read", arguments: {} }], timestamp: 2000 },
+    { role: "toolResult", toolCallId: "toolu_1", toolName: "read", isError: false, content: [{ type: "text", text: "file data" }], timestamp: 3000 },
+    { role: "user",       content: [{ type: "text", text: "thanks" }], timestamp: 4000 },
+  ];
+
+  // Block that extends to the end of conversation
+  const state = makeState([
+    {
+      id: 1,
+      topic: "file read",
+      summary: "File was read.",
+      startTimestamp: 1000,
+      endTimestamp: 4000,
+      anchorTimestamp: 4001, // Fixed: was Infinity before the bugfix
+      active: true,
+      summaryTokenEstimate: 5,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+
+  console.log("  Result messages:");
+  for (const m of result) {
+    const preview = Array.isArray(m.content)
+      ? m.content.map((b: any) => b.text ?? b.type ?? "?").join(" | ").slice(0, 60)
+      : String(m.content).slice(0, 60);
+    console.log(`    role="${m.role}"  ts=${m.timestamp}  content="${preview}"`);
+  }
+
+  // The synthetic message timestamp must be finite (not Infinity)
+  const synthetic = result.find(
+    (m: any) => m.role === "user" && typeof m.content?.[0]?.text === "string" && m.content[0].text.includes("Compressed section")
+  );
+  assert.ok(synthetic, "FAIL — no synthetic compressed message found");
+  assert.ok(
+    Number.isFinite(synthetic.timestamp),
+    `FAIL — synthetic message has non-finite timestamp: ${synthetic.timestamp}`
+  );
+  console.log(`  PASS: synthetic message has finite timestamp (${synthetic.timestamp})`);
+
+  console.log("TEST 10 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 11 — CORRUPTED BLOCK WITH NULL/INFINITY TIMESTAMPS (resilience)
+//
+// Blocks from older sessions may have null/Infinity timestamps due to JSON
+// round-trip corruption. These blocks should be skipped during compression
+// application and should not block new compress operations.
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 11: corrupted block with null/Infinity timestamps is skipped");
+
+  const messages: any[] = [
+    { role: "user",       content: [{ type: "text", text: "hello" }], timestamp: 1000 },
+    { role: "assistant",  content: [{ type: "text", text: "hi" }], timestamp: 2000 },
+    { role: "user",       content: [{ type: "text", text: "bye" }], timestamp: 3000 },
+  ];
+
+  // Block with corrupted timestamps (null from JSON round-trip)
+  const state = makeState([
+    {
+      id: 1,
+      topic: "ghost block",
+      summary: "This block has corrupted timestamps.",
+      startTimestamp: null as any,  // null from JSON deserialization of Infinity
+      endTimestamp: null as any,
+      anchorTimestamp: null as any,
+      active: true,
+      summaryTokenEstimate: 5,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+
+  console.log("  Result messages:");
+  for (const m of result) {
+    const preview = Array.isArray(m.content)
+      ? m.content.map((b: any) => b.text ?? b.type ?? "?").join(" | ").slice(0, 60)
+      : String(m.content).slice(0, 60);
+    console.log(`    role="${m.role}"  ts=${m.timestamp}  content="${preview}"`);
+  }
+
+  // All 3 original messages should survive (ghost block was skipped)
+  assert.strictEqual(result.length, 3, `FAIL — expected 3 messages, got ${result.length}`);
+  console.log("  PASS: corrupted block skipped, all original messages preserved");
+
+  console.log("TEST 11 PASSED\n");
+}
+
 console.log("All tests passed.");

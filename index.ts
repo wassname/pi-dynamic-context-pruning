@@ -81,7 +81,16 @@ export default function (pi: ExtensionAPI) {
         const data = entry.data as any
 
         if (data?.compressionBlocks) {
-          state.compressionBlocks = data.compressionBlocks
+          // Filter out blocks with corrupted (null/NaN/Infinity) timestamps —
+          // these were caused by Infinity anchorTimestamp values that became
+          // null after JSON round-trip.
+          const validBlocks = data.compressionBlocks.filter(
+            (b: any) =>
+              Number.isFinite(b.startTimestamp) &&
+              Number.isFinite(b.endTimestamp) &&
+              Number.isFinite(b.anchorTimestamp),
+          )
+          state.compressionBlocks = validBlocks
           state.nextBlockId = data.nextBlockId ?? state.compressionBlocks.length
           state.tokensSaved = data.tokensSaved ?? 0
           state.totalPruneCount = data.totalPruneCount ?? 0
