@@ -708,4 +708,52 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("TEST 9 PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// Test 10 — CORRUPTED BLOCK WITH NULL/INFINITY TIMESTAMPS (resilience)
+//
+// Blocks from older sessions may have null/Infinity timestamps due to JSON
+// round-trip corruption. These blocks should be skipped during compression
+// application and should not block new compress operations.
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 10: corrupted block with null/Infinity timestamps is skipped");
+
+  const messages: any[] = [
+    { role: "user",       content: [{ type: "text", text: "hello" }], timestamp: 1000 },
+    { role: "assistant",  content: [{ type: "text", text: "hi" }], timestamp: 2000 },
+    { role: "user",       content: [{ type: "text", text: "bye" }], timestamp: 3000 },
+  ];
+
+  // Block with corrupted timestamps (null from JSON round-trip)
+  const state = makeState([
+    {
+      id: 1,
+      topic: "ghost block",
+      summary: "This block has corrupted timestamps.",
+      startTimestamp: null as any,  // null from JSON deserialization of Infinity
+      endTimestamp: null as any,
+      anchorTimestamp: null as any,
+      active: true,
+      summaryTokenEstimate: 5,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+
+  console.log("  Result messages:");
+  for (const m of result) {
+    const preview = Array.isArray(m.content)
+      ? m.content.map((b: any) => b.text ?? b.type ?? "?").join(" | ").slice(0, 60)
+      : String(m.content).slice(0, 60);
+    console.log(`    role="${m.role}"  ts=${m.timestamp}  content="${preview}"`);
+  }
+
+  // All 3 original messages should survive (ghost block was skipped)
+  assert.strictEqual(result.length, 3, `FAIL — expected 3 messages, got ${result.length}`);
+  console.log("  PASS: corrupted block skipped, all original messages preserved");
+
+  console.log("TEST 10 PASSED\n");
+}
+
 console.log("All tests passed.");

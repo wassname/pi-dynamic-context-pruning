@@ -48,6 +48,9 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
   if (activeBlocks.length === 0) return messages;
 
   for (const block of activeBlocks) {
+    // Skip blocks with corrupted timestamps (from pre-fix sessions)
+    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue;
+
     // Find start and end indices by timestamp
     const startIdx = messages.findIndex((m) => m.timestamp === block.startTimestamp);
     const endIdx = messages.findIndex((m) => m.timestamp === block.endTimestamp);
@@ -153,7 +156,10 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
             "</dcp-block-id>",
         },
       ],
-      timestamp: block.anchorTimestamp - 0.5,
+      // anchorTimestamp is always finite (resolveAnchorTimestamp returns
+      // endTimestamp + 1 instead of Infinity), but guard against corrupted
+      // state from older sessions where Infinity/null could leak in.
+      timestamp: Number.isFinite(block.anchorTimestamp) ? block.anchorTimestamp - 0.5 : block.endTimestamp + 0.5,
     };
 
     // Estimate tokens added by the summary
