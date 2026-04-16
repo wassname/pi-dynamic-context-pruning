@@ -24,7 +24,7 @@ export interface DcpConfig {
     protectUserMessages: boolean
   }
   compact: {
-    autoCompactThreshold: number // 0-1, fraction of context that DCP blocks must occupy before triggering compaction (0 = disabled)
+    autoCompactThreshold: number // 0-1, fraction of context that DCP summary blocks must occupy before triggering compaction (0 = disabled). Compaction deactivates all DCP blocks and resets message counting.
   }
   strategies: {
     deduplication: {
@@ -62,7 +62,7 @@ const DEFAULT_CONFIG: DcpConfig = {
     protectUserMessages: false,
   },
   compact: {
-    autoCompactThreshold: 0.5, // trigger compaction when DCP blocks occupy >= 50% of context tokens
+    autoCompactThreshold: 0.5, // trigger compaction when DCP summary blocks occupy >= 50% of context tokens. Resets message counting.
   },
   strategies: {
     deduplication: {
@@ -109,7 +109,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   // "protectedFilePatterns": [],
   // "pruneNotification": "detailed",
   // "compact": {
-  //   "autoCompactThreshold": 0.5  // trigger pi compaction when DCP blocks >= 50% of context (0 = disabled)
+  //   "autoCompactThreshold": 0.5  // trigger pi compaction when DCP summary blocks >= 50% of context (0 = disabled). Resets message counting.
   // }
 }
 `

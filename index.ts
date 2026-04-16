@@ -202,7 +202,7 @@ export default function (pi: ExtensionAPI) {
     // automaticStrategies is on) but skip autonomous nudge injection.
     const usage = ctx.getContextUsage()
     if (usage && usage.tokens !== null) {
-      // ── Auto-compaction: if DCP blocks exceed threshold, trigger pi compaction ──
+      // ── Auto-compaction: if DCP summary blocks exceed threshold, trigger pi compaction ──
       if (!state.manualMode && config.compact.autoCompactThreshold > 0) {
         const activeBlocks = state.compressionBlocks.filter((b) => b.active)
         const dcpBlockTokens = activeBlocks.reduce((sum, b) => sum + b.summaryTokenEstimate, 0)
@@ -263,10 +263,10 @@ export default function (pi: ExtensionAPI) {
     return { messages: prunedMessages }
   })
 
-  // ── 11. session_compact: deactivate all DCP blocks ───────────────────────
+  // ── 11. session_compact: deactivate all DCP summary blocks and reset message counting ───────────────────────
   // When pi's built-in compaction runs, it folds all prior context (including
   // DCP summary blocks) into a single compaction summary. All active DCP
-  // blocks are now redundant — deactivate them.
+  // blocks are now redundant — deactivate them and reset message counting.
   pi.on("session_compact", async (_event, _ctx) => {
     const activeBlocks = state.compressionBlocks.filter((b) => b.active)
     if (activeBlocks.length > 0) {

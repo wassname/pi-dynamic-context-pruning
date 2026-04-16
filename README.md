@@ -11,6 +11,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 - **Manual mode** — disable autonomous compression nudges; trigger compression only via `/dcp compress` or explicit user request
 - **Session persistence** — compression blocks and pruning state survive session restarts
 - **`/dcp` commands** — inspect context usage, view stats, sweep tool outputs, and manage compression blocks interactively
+- **Auto-compaction** — triggers pi's built-in compaction when DCP summary blocks exceed a configurable fraction of context, preventing indefinite block accumulation
 
 ## Installation
 
@@ -81,7 +82,13 @@ DCP uses a layered configuration system (later layers override earlier ones):
   // Glob patterns — matching file paths are never pruned
   "protectedFilePatterns": [],
   // "off" | "minimal" | "detailed"
-  "pruneNotification": "detailed"
+  "pruneNotification": "detailed",
+  // Auto-compaction: trigger pi's built-in compaction when DCP summary blocks
+  // occupy >= this fraction of context tokens (0 = disabled).
+  // Compaction deactivates all DCP blocks and resets message counting.
+  // "compact": {
+  //   "autoCompactThreshold": 0.5
+  // }
 }
 ```
 
