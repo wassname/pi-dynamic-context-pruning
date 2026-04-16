@@ -205,12 +205,15 @@ export function registerCompressTool(
             .join(', ')
 
           const gapInfo = gaps.length > 0
-            ? gaps.map(g => `compress(${g.replace('..', ', ')})`).join('; ')
+            ? gaps.map(g => {
+                const [s, e] = g.split('..')
+                return `{startId: "${s}", endId: "${e}"}`
+              }).join(', ')
             : 'none available — all visible messages are covered by existing blocks'
 
           throw new Error(
-            `You tried compress(${startId}, ${endId}) but this overlaps existing summaries: ${overlapInfo}. ` +
-            `Instead use: ${gapInfo}`,
+            `Range {startId: "${startId}", endId: "${endId}"} overlaps existing summaries: ${overlapInfo}. ` +
+            `Available ranges: ${gapInfo}`,
           )
         }
 
