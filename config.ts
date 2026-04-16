@@ -23,6 +23,9 @@ export interface DcpConfig {
     protectedTools: string[] // these tool outputs always protected from pruning
     protectUserMessages: boolean
   }
+  compact: {
+    autoCompactThreshold: number // 0-1, fraction of context that DCP blocks must occupy before triggering compaction (0 = disabled)
+  }
   strategies: {
     deduplication: {
       enabled: boolean
@@ -57,6 +60,9 @@ const DEFAULT_CONFIG: DcpConfig = {
     nudgeForce: "soft",
     protectedTools: ["compress", "write", "edit"],
     protectUserMessages: false,
+  },
+  compact: {
+    autoCompactThreshold: 0.5, // trigger compaction when DCP blocks occupy >= 50% of context tokens
   },
   strategies: {
     deduplication: {
@@ -101,7 +107,10 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] }
   // },
   // "protectedFilePatterns": [],
-  // "pruneNotification": "detailed"
+  // "pruneNotification": "detailed",
+  // "compact": {
+  //   "autoCompactThreshold": 0.5  // trigger pi compaction when DCP blocks >= 50% of context (0 = disabled)
+  // }
 }
 `
 

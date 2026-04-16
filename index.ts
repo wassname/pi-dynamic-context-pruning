@@ -201,49 +201,83 @@ export default function (pi: ExtensionAPI) {
     // In manual mode we still apply pruning strategies (if
     // automaticStrategies is on) but skip autonomous nudge injection.
     const usage = ctx.getContextUsage()
-    if (usage && usage.tokens !== null && !state.manualMode) {
-      const contextPercent = usage.tokens / usage.contextWindow
+    if (usage && usage.tokens !== null) {
+      // ── Auto-compaction: if DCP blocks exceed threshold, trigger pi compaction ──
+      if (!state.manualMode && config.compact.autoCompactThreshold > 0) {
+        const activeBlocks = state.compressionBlocks.filter((b) => b.active)
+        const dcpBlockTokens = activeBlocks.reduce((sum, b) => sum + b.summaryTokenEstimate, 0)
+        const blockFraction = dcpBlockTokens / usage.tokens
 
-      // Count tool calls since the last user message (used for iteration nudge).
-      let toolCallsSinceLastUser = 0
-      for (let i = prunedMessages.length - 1; i >= 0; i--) {
-        const msg = prunedMessages[i] as any
-        if (msg.role === "user") break
-        if (msg.role === "toolResult") toolCallsSinceLastUser++
+        if (blockFraction >= config.compact.autoCompactThreshold) {
+          ctx.compact({
+            customInstructions: "Include all DCP compression block summaries in the compaction summary.",
+          })
+          // Deactivate blocks immediately so we don't trigger again before compaction completes
+          for (const block of activeBlocks) {
+            block.active = false
+          }
+          saveState(pi, state)
+        }
       }
 
-      const nudgeType = getNudgeType(
-        contextPercent,
-        state,
-        config,
-        toolCallsSinceLastUser,
-      )
+      if (!state.manualMode) {
+        const contextPercent = usage.tokens / usage.contextWindow
 
-      if (nudgeType) {
-        let nudgeText: string
-
-        if (nudgeType === "context-strong") {
-          nudgeText = CONTEXT_LIMIT_NUDGE_STRONG
-        } else if (nudgeType === "context-soft") {
-          nudgeText = CONTEXT_LIMIT_NUDGE_SOFT
-        } else if (nudgeType === "iteration") {
-          nudgeText = ITERATION_NUDGE
-        } else {
-          // "turn"
-          nudgeText = TURN_NUDGE
+        // Count tool calls since the last user message (used for iteration nudge).
+        let toolCallsSinceLastUser = 0
+        for (let i = prunedMessages.length - 1; i >= 0; i--) {
+          const msg = prunedMessages[i] as any
+          if (msg.role === "user") break
+          if (msg.role === "toolResult") toolCallsSinceLastUser++
         }
 
-        injectNudge(prunedMessages, nudgeText)
-        state.nudgeCounter = 0
-      } else {
-        state.nudgeCounter++
-      }
-    }
+        const nudgeType = getNudgeType(
+          contextPercent,
+          state,
+          config,
+          toolCallsSinceLastUser,
+        )
+
+        if (nudgeType) {
+          let nudgeText: string
+
+          if (nudgeType === "context-strong") {
+            nudgeText = CONTEXT_LIMIT_NUDGE_STRONG
+          } else if (nudgeType === "context-soft") {
+            nudgeText = CONTEXT_LIMIT_NUDGE_SOFT
+          } else if (nudgeType === "iteration") {
+            nudgeText = ITERATION_NUDGE
+          } else {
+            // "turn"
+            nudgeText = TURN_NUDGE
+          }
+
+          injectNudge(prunedMessages, nudgeText)
+          state.nudgeCounter = 0
+        } else {
+          state.nudgeCounter++
+        }
+      } // end !manualMode nudge block
+    } // end usage check
 
     return { messages: prunedMessages }
   })
 
-  // ── 11. agent_end: persist state after each agent run ────────────────────
+  // ── 11. session_compact: deactivate all DCP blocks ───────────────────────
+  // When pi's built-in compaction runs, it folds all prior context (including
+  // DCP summary blocks) into a single compaction summary. All active DCP
+  // blocks are now redundant — deactivate them.
+  pi.on("session_compact", async (_event, _ctx) => {
+    const activeBlocks = state.compressionBlocks.filter((b) => b.active)
+    if (activeBlocks.length > 0) {
+      for (const block of activeBlocks) {
+        block.active = false
+      }
+      saveState(pi, state)
+    }
+  })
+
+  // ── 12. agent_end: persist state after each agent run ────────────────────
   pi.on("agent_end", async (_event, _ctx) => {
     saveState(pi, state)
   })
