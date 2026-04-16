@@ -173,6 +173,7 @@ export function registerCompressTool(
 
           const sortedEntries = [...state.messageIdSnapshot.entries()]
             .filter(([id]) => id.startsWith('m'))  // only mNNN ids
+            .filter(([, ts]) => ts >= startTimestamp && ts <= endTimestamp)  // only within requested range
             .sort((a, b) => a[1] - b[1])
 
           // Walk sorted messages, grouping consecutive uncovered ones into gap ranges
@@ -213,7 +214,7 @@ export function registerCompressTool(
 
           throw new Error(
             `[compress] Range {startId: "${startId}", endId: "${endId}"} overlaps existing summaries: ${overlapInfo}. ` +
-            `Available ranges: ${gapInfo}`,
+            `Available ranges within your requested range: ${gapInfo}`,
           )
         }
 
