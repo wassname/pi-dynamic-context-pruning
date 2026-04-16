@@ -151,9 +151,9 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
             block.topic +
             "]\n\n" +
             block.summary +
-            "\n\n<dcp-block-id>b" +
+            "\n\n<!-- dcp-block-id: b" +
             block.id +
-            "</dcp-block-id>",
+            " -->",
         },
       ],
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
@@ -356,11 +356,11 @@ function injectMessageIds(messages: any[], state: DcpState): void {
     const id = "m" + String(counter).padStart(3, "0");
     counter++;
 
-    const idTag = `\n<dcp-id>${id}</dcp-id>`;
+    const idTag = `\n<!-- dcp-id: ${id} -->`;
 
     if (role === "user") {
       if (typeof msg.content === "string") {
-        msg.content = msg.content + `\n\n<dcp-id>${id}</dcp-id>`;
+        msg.content = msg.content + `\n\n<!-- dcp-id: ${id} -->`;
       } else if (Array.isArray(msg.content)) {
         msg.content = [...msg.content, { type: "text", text: idTag }];
       }
