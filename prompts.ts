@@ -135,6 +135,8 @@ When multiple independent ranges are ready and their boundaries do not overlap, 
 export const CONTEXT_LIMIT_NUDGE_STRONG = `<dcp-system-reminder>
 CRITICAL WARNING: MAX CONTEXT LIMIT REACHED
 
+Do not narrate your compression decision. Either compress or continue silently — never output a message explaining why you are not compressing.
+
 You are at or beyond the configured max context threshold. This is an emergency context-recovery moment.
 
 You MUST use the \`compress\` tool now. Do not continue normal exploration until compression is handled.
@@ -163,6 +165,8 @@ If the compressed range includes user messages, preserve user intent exactly. Pr
 export const CONTEXT_LIMIT_NUDGE_SOFT = `<dcp-system-reminder>
 NOTICE: Context usage is high.
 
+Do not narrate your compression decision. Either compress or continue silently — never output a message explaining why you are not compressing.
+
 Look for a closed, self-contained range that no longer needs to stay raw and compress it now.
 
 RANGE SELECTION
@@ -180,6 +184,8 @@ If nothing is cleanly closed yet, continue — but compress at the earliest oppo
 export const TURN_NUDGE = `<dcp-system-reminder>
 Evaluate the conversation for compressible ranges.
 
+Do not narrate your compression decision. Either compress or continue silently — never output a message explaining why you are not compressing.
+
 If any range is cleanly closed and unlikely to be needed again, use the compress tool on it.
 If direction has shifted, compress earlier ranges that are now less relevant.
 
@@ -193,6 +199,8 @@ Keep active context uncompressed.
  */
 export const ITERATION_NUDGE = `<dcp-system-reminder>
 You've been iterating for a while after the last user message.
+
+Do not narrate your compression decision. Either compress or continue silently — never output a message explaining why you are not compressing.
 
 If there is a closed portion that is unlikely to be referenced immediately (for example, finished research before implementation), use the compress tool on it now.
 
