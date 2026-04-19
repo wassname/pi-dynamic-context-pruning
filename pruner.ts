@@ -151,9 +151,9 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
             block.topic +
             "]\n\n" +
             block.summary +
-            "\n\n<!-- dcp-block-id: b" +
+            "\n\n<dcp-block-id>b" +
             block.id +
-            " -->",
+            "</dcp-block-id>",
         },
       ],
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
@@ -336,8 +336,26 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
 }
 
 /**
+ * Strip any existing dcp-id tags from a string, so strip+inject is idempotent
+ * for clean messages (no cache bust) and removes model-echoed copies.
+ */
+function stripDcpIdTags(content: string): string {
+  return content.replace(/\n<dcp-id>\S+<\/dcp-id>/g, "");
+}
+
+/** Test whether a text block contains a dcp-id tag (for array filtering). */
+function isDcpIdBlock(block: any): boolean {
+  return block.type === "text" && /\n<dcp-id>\S+<\/dcp-id>/.test(block.text);
+}
+
+/**
  * Inject sequential message IDs into eligible messages.
  * Updates state.messageIdSnapshot.
+ *
+ * Strip-before-inject: always strips existing dcp-id tags before appending
+ * the fresh one. For messages that were never echoed this is idempotent
+ * (same result, no cache bust). For messages with model-echoed tags it
+ * removes the duplicate, breaking the accumulation loop.
  */
 function injectMessageIds(messages: any[], state: DcpState): void {
   // Clear the snapshot and rebuild
@@ -356,42 +374,48 @@ function injectMessageIds(messages: any[], state: DcpState): void {
     const id = "m" + String(counter).padStart(3, "0");
     counter++;
 
-    const idTag = `\n<!-- dcp-id: ${id} -->`;
+    const idTag = `\n<dcp-id>${id}</dcp-id>`;
 
     if (role === "user") {
       if (typeof msg.content === "string") {
-        msg.content = msg.content + `\n\n<!-- dcp-id: ${id} -->`;
+        msg.content = stripDcpIdTags(msg.content) + `\n\n<dcp-id>${id}</dcp-id>`;
       } else if (Array.isArray(msg.content)) {
-        msg.content = [...msg.content, { type: "text", text: idTag }];
+        msg.content = [
+          ...msg.content.filter((b: any) => !isDcpIdBlock(b)),
+          { type: "text", text: idTag },
+        ];
       }
     } else if (role === "toolResult" || role === "bashExecution") {
       if (Array.isArray(msg.content)) {
-        msg.content = [...msg.content, { type: "text", text: idTag }];
+        msg.content = [
+          ...msg.content.filter((b: any) => !isDcpIdBlock(b)),
+          { type: "text", text: idTag },
+        ];
       } else if (typeof msg.content === "string") {
-        msg.content = msg.content + idTag;
+        msg.content = stripDcpIdTags(msg.content) + idTag;
       }
     } else if (role === "assistant") {
       if (Array.isArray(msg.content)) {
-        // Insert the ID tag before any tool_use (toolCall) blocks.
+        // Strip echoed tags first, then insert before any tool_use (toolCall) blocks.
         // Anthropic requires: thinking → text → tool_use.
-        // Appending after tool_use blocks violates that constraint.
-        const firstToolCallIdx = msg.content.findIndex(
+        const stripped = msg.content.filter(
+          (b: any) => !isDcpIdBlock(b)
+        );
+        const firstToolCallIdx = stripped.findIndex(
           (b: any) => b.type === "toolCall",
         );
         const idBlock = { type: "text", text: idTag };
         if (firstToolCallIdx === -1) {
-          // No tool_use blocks — append as usual
-          msg.content = [...msg.content, idBlock];
+          msg.content = [...stripped, idBlock];
         } else {
-          // Insert immediately before the first tool_use block
           msg.content = [
-            ...msg.content.slice(0, firstToolCallIdx),
+            ...stripped.slice(0, firstToolCallIdx),
             idBlock,
-            ...msg.content.slice(firstToolCallIdx),
+            ...stripped.slice(firstToolCallIdx),
           ];
         }
       } else if (typeof msg.content === "string") {
-        msg.content = msg.content + idTag;
+        msg.content = stripDcpIdTags(msg.content) + idTag;
       }
     }
 
